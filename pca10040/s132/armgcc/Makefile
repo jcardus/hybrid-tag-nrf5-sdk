@@ -237,5 +237,10 @@ flash_softdevice:
 	@echo Flashing: s132_nrf52_3.0.0_softdevice.hex
 	openocd -f interface/stlink.cfg -f target/nrf52.cfg -c "program $(SDK_ROOT)/components/softdevice/s132/hex/s132_nrf52_3.0.0_softdevice.hex verify reset exit"
 
+run: flash
+	@echo Firmware running
+	openocd -f interface/stlink.cfg -f target/nrf52.cfg -c "init"  -c "rtt setup 0x20000000 0x10000 \"SEGGER RTT\"" -c "rtt start" -c "rtt server start 9090 0; reset run"
+
+
 erase:
 	openocd -f interface/stlink.cfg -f target/nrf52.cfg -c "init; reset halt; nrf5 mass_erase; exit"
