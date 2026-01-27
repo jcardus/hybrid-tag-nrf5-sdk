@@ -28,14 +28,25 @@
 #define CUSTOM_SERVICE_UUID      0x1234
 #define CUSTOM_CHAR_UUID         0x1235
 
-#define DATA_LENGTH              28
+// Google characteristic UUID (same service)
+#define GOOGLE_CHAR_UUID         0x1236
+
+#define APPLE_KEY_LENGTH         28
+#define GOOGLE_KEY_LENGTH        20
 
 static ble_gap_adv_params_t m_adv_params;
 static uint16_t             m_conn_handle = BLE_CONN_HANDLE_INVALID;
 static uint16_t             m_service_handle;
-static ble_gatts_char_handles_t m_char_handles;
-static uint8_t              m_received_data[DATA_LENGTH];
+static ble_gatts_char_handles_t m_apple_char_handles;
+static ble_gatts_char_handles_t m_google_char_handles;
 static uint8_t              m_custom_uuid_type;
+
+// Apple key storage - receives 28 bytes in two writes (20 + 8)
+static uint8_t              apple_key[APPLE_KEY_LENGTH];
+static uint8_t              m_apple_key_offset = 0;
+
+// Google key storage - receives 20 bytes in one write
+static uint8_t              google_key[GOOGLE_KEY_LENGTH];
 
 void assert_nrf_callback(uint16_t line_num, const uint8_t * p_file_name)
 {
@@ -46,17 +57,52 @@ static void on_write(ble_evt_t * p_ble_evt)
 {
     ble_gatts_evt_write_t * p_evt_write = &p_ble_evt->evt.gatts_evt.params.write;
 
-    if (p_evt_write->handle == m_char_handles.value_handle)
+    // Handle Apple key writes (28 bytes in two writes: 20 + 8)
+    if (p_evt_write->handle == m_apple_char_handles.value_handle)
     {
         uint16_t len = p_evt_write->len;
-        if (len > DATA_LENGTH) len = DATA_LENGTH;
 
-        memcpy(m_received_data, p_evt_write->data, len);
+        // Ensure we don't overflow apple_key buffer
+        if (m_apple_key_offset + len > APPLE_KEY_LENGTH)
+        {
+            len = APPLE_KEY_LENGTH - m_apple_key_offset;
+        }
 
-        NRF_LOG_INFO("Received %d bytes:\r\n", len);
+        // Copy data to apple_key at current offset
+        memcpy(&apple_key[m_apple_key_offset], p_evt_write->data, len);
+        m_apple_key_offset += len;
+
+        NRF_LOG_INFO("Apple: received %d bytes (total: %d/%d)\r\n", p_evt_write->len, m_apple_key_offset, APPLE_KEY_LENGTH);
+
+        // Check if we have received all 28 bytes
+        if (m_apple_key_offset >= APPLE_KEY_LENGTH)
+        {
+            NRF_LOG_INFO("Apple key complete:\r\n");
+            for (int i = 0; i < APPLE_KEY_LENGTH; i++)
+            {
+                NRF_LOG_RAW_INFO("%02X ", apple_key[i]);
+            }
+            NRF_LOG_RAW_INFO("\r\n");
+
+            // Reset offset for next key
+            m_apple_key_offset = 0;
+        }
+    }
+    // Handle Google key writes (20 bytes in one write)
+    else if (p_evt_write->handle == m_google_char_handles.value_handle)
+    {
+        uint16_t len = p_evt_write->len;
+        if (len > GOOGLE_KEY_LENGTH)
+        {
+            len = GOOGLE_KEY_LENGTH;
+        }
+
+        memcpy(google_key, p_evt_write->data, len);
+
+        NRF_LOG_INFO("Google key received (%d bytes):\r\n", len);
         for (int i = 0; i < len; i++)
         {
-            NRF_LOG_RAW_INFO("%02X ", m_received_data[i]);
+            NRF_LOG_RAW_INFO("%02X ", google_key[i]);
         }
         NRF_LOG_RAW_INFO("\r\n");
     }
@@ -94,11 +140,9 @@ static void ble_evt_dispatch(ble_evt_t * p_ble_evt)
 
 static void services_init(void)
 {
-    uint32_t err_code;
-
-    // Add custom UUID base
+    // Add a custom UUID base
     ble_uuid128_t base_uuid = {CUSTOM_SERVICE_UUID_BASE};
-    err_code = sd_ble_uuid_vs_add(&base_uuid, &m_custom_uuid_type);
+    uint32_t err_code = sd_ble_uuid_vs_add(&base_uuid, &m_custom_uuid_type);
     APP_ERROR_CHECK(err_code);
 
     // Add service
@@ -109,7 +153,7 @@ static void services_init(void)
     err_code = sd_ble_gatts_service_add(BLE_GATTS_SRVC_TYPE_PRIMARY, &service_uuid, &m_service_handle);
     APP_ERROR_CHECK(err_code);
 
-    // Add characteristic
+    // Common characteristic setup
     ble_gatts_char_md_t char_md;
     ble_gatts_attr_t    attr_char_value;
     ble_uuid_t          char_uuid;
@@ -119,26 +163,43 @@ static void services_init(void)
     char_md.char_props.write = 1;
     char_md.char_props.write_wo_resp = 1;
 
-    char_uuid.type = m_custom_uuid_type;
-    char_uuid.uuid = CUSTOM_CHAR_UUID;
-
     memset(&attr_md, 0, sizeof(attr_md));
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&attr_md.read_perm);
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&attr_md.write_perm);
     attr_md.vloc = BLE_GATTS_VLOC_STACK;
 
+    // Add Apple characteristic (0x1235, 28 bytes)
+    char_uuid.type = m_custom_uuid_type;
+    char_uuid.uuid = CUSTOM_CHAR_UUID;
+
     memset(&attr_char_value, 0, sizeof(attr_char_value));
     attr_char_value.p_uuid    = &char_uuid;
     attr_char_value.p_attr_md = &attr_md;
-    attr_char_value.init_len  = DATA_LENGTH;
+    attr_char_value.init_len  = APPLE_KEY_LENGTH;
     attr_char_value.init_offs = 0;
-    attr_char_value.max_len   = DATA_LENGTH;
-    attr_char_value.p_value   = m_received_data;
+    attr_char_value.max_len   = APPLE_KEY_LENGTH;
+    attr_char_value.p_value   = apple_key;
 
-    err_code = sd_ble_gatts_characteristic_add(m_service_handle, &char_md, &attr_char_value, &m_char_handles);
+    err_code = sd_ble_gatts_characteristic_add(m_service_handle, &char_md, &attr_char_value, &m_apple_char_handles);
     APP_ERROR_CHECK(err_code);
 
-    NRF_LOG_INFO("Service initialized. Char handle: 0x%04X\r\n", m_char_handles.value_handle);
+    // Add Google characteristic (0x1236, 20 bytes)
+    char_uuid.uuid = GOOGLE_CHAR_UUID;
+
+    memset(&attr_char_value, 0, sizeof(attr_char_value));
+    attr_char_value.p_uuid    = &char_uuid;
+    attr_char_value.p_attr_md = &attr_md;
+    attr_char_value.init_len  = GOOGLE_KEY_LENGTH;
+    attr_char_value.init_offs = 0;
+    attr_char_value.max_len   = GOOGLE_KEY_LENGTH;
+    attr_char_value.p_value   = google_key;
+
+    err_code = sd_ble_gatts_characteristic_add(m_service_handle, &char_md, &attr_char_value, &m_google_char_handles);
+    APP_ERROR_CHECK(err_code);
+
+    NRF_LOG_INFO("Service 0x%04X initialized\r\n", CUSTOM_SERVICE_UUID);
+    NRF_LOG_INFO("  Apple char 0x%04X (handle 0x%04X)\r\n", CUSTOM_CHAR_UUID, m_apple_char_handles.value_handle);
+    NRF_LOG_INFO("  Google char 0x%04X (handle 0x%04X)\r\n", GOOGLE_CHAR_UUID, m_google_char_handles.value_handle);
 }
 
 static void advertising_init(void)
@@ -274,7 +335,6 @@ int main(void)
     advertising_init();
 
     NRF_LOG_INFO("BLE GATT Service started\r\n");
-    NRF_LOG_INFO("Service UUID: 0x%04X, Char UUID: 0x%04X\r\n", CUSTOM_SERVICE_UUID, CUSTOM_CHAR_UUID);
 
     advertising_start();
 
