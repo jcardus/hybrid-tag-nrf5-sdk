@@ -83,6 +83,28 @@ static void key_switch_timer_handler(void * p_context)
     start_beacon_advertising();
 }
 
+static void set_addr_from_key(const uint8_t *key)
+{
+    ble_gap_addr_t addr;
+    addr.addr_type = BLE_GAP_ADDR_TYPE_RANDOM_STATIC;
+    addr.addr[5] = key[0] | 0xC0;  // Set two MSBs for random static address
+    addr.addr[4] = key[1];
+    addr.addr[3] = key[2];
+    addr.addr[2] = key[3];
+    addr.addr[1] = key[4];
+    addr.addr[0] = key[5];
+
+#if (NRF_SD_BLE_API_VERSION >= 3)
+    sd_ble_gap_addr_set(&addr);
+#else
+    sd_ble_gap_address_set(BLE_GAP_ADDR_CYCLE_MODE_NONE, &addr);
+#endif
+
+    NRF_LOG_INFO("MAC set to: %02X:%02X:%02X:%02X:%02X:%02X\r\n",
+        addr.addr[5], addr.addr[4], addr.addr[3],
+        addr.addr[2], addr.addr[1], addr.addr[0]);
+}
+
 static void start_beacon_advertising(void)
 {
     // Stop current advertising
@@ -95,13 +117,21 @@ static void start_beacon_advertising(void)
 
     if (m_current_key == 0)
     {
+        // Set MAC address from apple_key first 6 bytes
+        set_addr_from_key(apple_key);
+
         // Apple key: last 22 bytes + 2 company ID + 1 AD type = 25 bytes
-        adv_data[adv_len++] = 22 + 3;                // Length: data + company ID + AD type
-        adv_data[adv_len++] = 0xFF;                  // AD type: Manufacturer Specific
+        adv_data[adv_len++] = 0x1e;        /* Length (30) */
+        adv_data[adv_len++] = 0xFF;        // AD type: Manufacturer Specific
         adv_data[adv_len++] = APPLE_COMPANY_ID & 0xFF;
         adv_data[adv_len++] = (APPLE_COMPANY_ID >> 8) & 0xFF;
+        adv_data[adv_len++] = 0x12;        /* OF type */
+        adv_data[adv_len++] = 0x19;        /* OF length */
+        adv_data[adv_len++] = 0x99;        /* Status */
         memcpy(&adv_data[adv_len], &apple_key[6], 22);  // Last 22 bytes (skip first 6)
         adv_len += 22;
+        adv_data[adv_len++] = apple_key[0] >> 6;  /* First 2 bits of key[0] */
+        adv_data[adv_len++] = 0x00;        /* Hint */
         NRF_LOG_INFO("Advertising Apple key\r\n");
     }
     else
