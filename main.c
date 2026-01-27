@@ -182,13 +182,12 @@ static void advertising_start(void)
 
 static void gap_params_init(void)
 {
-    uint32_t                err_code;
     ble_gap_conn_params_t   gap_conn_params;
     ble_gap_conn_sec_mode_t sec_mode;
 
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&sec_mode);
 
-    err_code = sd_ble_gap_device_name_set(&sec_mode, (const uint8_t *)"Beacon28", 8);
+    uint32_t err_code = sd_ble_gap_device_name_set(&sec_mode, (const uint8_t *) "hybrid-tag", 8);
     APP_ERROR_CHECK(err_code);
 
     memset(&gap_conn_params, 0, sizeof(gap_conn_params));
@@ -203,8 +202,6 @@ static void gap_params_init(void)
 
 static void ble_stack_init(void)
 {
-    uint32_t err_code;
-
     nrf_clock_lf_cfg_t clock_lf_cfg = {
         .source        = NRF_CLOCK_LF_SRC_RC,
         .rc_ctiv       = 16,
@@ -215,12 +212,12 @@ static void ble_stack_init(void)
     SOFTDEVICE_HANDLER_INIT(&clock_lf_cfg, NULL);
 
     ble_enable_params_t ble_enable_params;
-    err_code = softdevice_enable_get_default_config(CENTRAL_LINK_COUNT,
-                                                    PERIPHERAL_LINK_COUNT,
-                                                    &ble_enable_params);
+    uint32_t err_code = softdevice_enable_get_default_config(CENTRAL_LINK_COUNT,
+                                                             PERIPHERAL_LINK_COUNT,
+                                                             &ble_enable_params);
     APP_ERROR_CHECK(err_code);
 
-    // Increase GATTS attribute table size for our service
+    // Increase the GATTS attribute table size for our service
     ble_enable_params.gatts_enable_params.attr_tab_size = 0x500;
 
     CHECK_RAM_START_ADDR(CENTRAL_LINK_COUNT, PERIPHERAL_LINK_COUNT);
@@ -232,7 +229,7 @@ static void ble_stack_init(void)
     err_code = softdevice_ble_evt_handler_set(ble_evt_dispatch);
     APP_ERROR_CHECK(err_code);
 
-    // Set custom MAC address
+    // Set a custom MAC address
     ble_gap_addr_t addr;
     addr.addr_type = BLE_GAP_ADDR_TYPE_RANDOM_STATIC;
     addr.addr[0] = 0x01;
@@ -264,9 +261,7 @@ static void power_manage(void)
 
 int main(void)
 {
-    uint32_t err_code;
-
-    err_code = NRF_LOG_INIT(NULL);
+    uint32_t err_code = NRF_LOG_INIT(NULL);
     APP_ERROR_CHECK(err_code);
 
     APP_TIMER_INIT(APP_TIMER_PRESCALER, APP_TIMER_OP_QUEUE_SIZE, false);
