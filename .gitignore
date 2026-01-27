@@ -1,0 +1,28 @@
+# Build artifacts
+_build/
+*.o
+*.elf
+*.hex
+*.map
+*.bin
+/hex/
+
+# IDE
+.idea/
+*.iml
+cmake-build-*/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Images (optional - remove if you want to keep them)
+*.jpg
+*.png
+
+# Temporary
+*.tmp
+*.bak
