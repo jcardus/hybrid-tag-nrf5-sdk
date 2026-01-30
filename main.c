@@ -9,13 +9,14 @@
 #include "app_timer.h"
 #include "nrf_log.h"
 #include "nrf_log_ctrl.h"
+#include "es_battery_voltage.h"
 
 #define CENTRAL_LINK_COUNT              0
 #define PERIPHERAL_LINK_COUNT           1   // Need 1 for connectable
 
 #define IS_SRVC_CHANGED_CHARACT_PRESENT 0
 
-#define APP_ADV_INTERVAL                MSEC_TO_UNITS(100, UNIT_0_625_MS)
+#define APP_ADV_INTERVAL                MSEC_TO_UNITS(1000, UNIT_0_625_MS)  // 1 second for battery saving
 #define APP_ADV_TIMEOUT                 0   // No timeout
 
 #define DEAD_BEEF                       0xDEADBEEF
@@ -70,6 +71,15 @@ void assert_nrf_callback(uint16_t line_num, const uint8_t * p_file_name)
     app_error_handler(DEAD_BEEF, line_num, p_file_name);
 }
 
+// Get battery voltage in millivolts
+static uint16_t get_battery_voltage_mv(void)
+{
+    uint16_t vbatt_mv;
+    es_battery_voltage_get(&vbatt_mv);
+    NRF_LOG_INFO("Battery: %d mV\r\n", vbatt_mv);
+    return vbatt_mv;
+}
+
 static void start_beacon_advertising(void);
 
 static void key_switch_timer_handler(void * p_context)
@@ -120,6 +130,9 @@ static void start_beacon_advertising(void)
         // Set MAC address from apple_key first 6 bytes
         set_addr_from_key(apple_key);
 
+        // Get battery voltage in mV
+        uint16_t battery_mv = get_battery_voltage_mv();
+
         // Apple key: last 22 bytes + 2 company ID + 1 AD type = 25 bytes
         adv_data[adv_len++] = 0x1e;        /* Length (30) */
         adv_data[adv_len++] = 0xFF;        // AD type: Manufacturer Specific
@@ -127,12 +140,12 @@ static void start_beacon_advertising(void)
         adv_data[adv_len++] = (APPLE_COMPANY_ID >> 8) & 0xFF;
         adv_data[adv_len++] = 0x12;        /* OF type */
         adv_data[adv_len++] = 0x19;        /* OF length */
-        adv_data[adv_len++] = 0x99;        /* Status */
+        adv_data[adv_len++] = (uint8_t)((battery_mv - 2000) / 10);  /* Status = (battery mV - 2000) / 10 */
         memcpy(&adv_data[adv_len], &apple_key[6], 22);  // Last 22 bytes (skip first 6)
         adv_len += 22;
         adv_data[adv_len++] = apple_key[0] >> 6;  /* First 2 bits of key[0] */
         adv_data[adv_len++] = 0x00;        /* Hint */
-        NRF_LOG_INFO("Advertising Apple key\r\n");
+        NRF_LOG_INFO("Advertising Apple key (bat: %d mV)\r\n", battery_mv);
     }
     else
     {
@@ -421,7 +434,7 @@ static void gap_params_init(void)
 
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&sec_mode);
 
-    uint32_t err_code = sd_ble_gap_device_name_set(&sec_mode, (const uint8_t *) "hybrid-tag", 8);
+    uint32_t err_code = sd_ble_gap_device_name_set(&sec_mode, (const uint8_t *) "HYBRID-T", 8);
     APP_ERROR_CHECK(err_code);
 
     memset(&gap_conn_params, 0, sizeof(gap_conn_params));
@@ -479,7 +492,7 @@ static void ble_stack_init(void)
 #endif
     APP_ERROR_CHECK(err_code);
 
-    err_code = sd_ble_gap_tx_power_set(4);
+    err_code = sd_ble_gap_tx_power_set(-4);  // Lower TX power for battery saving
     APP_ERROR_CHECK(err_code);
 
     NRF_LOG_INFO("MAC: %02X:%02X:%02X:%02X:%02X:%02X\r\n",
@@ -506,10 +519,13 @@ int main(void)
     err_code = app_timer_create(&m_key_switch_timer, APP_TIMER_MODE_REPEATED, key_switch_timer_handler);
     APP_ERROR_CHECK(err_code);
 
+    es_battery_voltage_init();
     ble_stack_init();
     gap_params_init();
     services_init();
     advertising_init();
+
+    get_battery_voltage_mv();
 
     NRF_LOG_INFO("BLE GATT Service started\r\n");
     NRF_LOG_INFO("Waiting for keys...\r\n");

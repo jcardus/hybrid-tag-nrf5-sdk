@@ -4,9 +4,40 @@ OUTPUT_DIRECTORY := _build
 
 SDK_ROOT ?= $(NRF_SDK_ROOT)
 ifeq ($(strip $(SDK_ROOT)),)
-$(error SDK_ROOT is not set. Set NRF_SDK_ROOT environment variable or pass SDK_ROOT=path/to/sdk)
+SDK_ROOT := ../../../nRF5_SDK_12.3.0_d7731ad
 endif
 PROJ_DIR := ../../..
+
+# Auto-download SDK if not present
+SDK_ZIP := nRF5_SDK_12.3.0_d7731ad.zip
+SDK_URL := https://developer.nordicsemi.com/nRF5_SDK/nRF5_SDK_v12.x.x/$(SDK_ZIP)
+
+ifeq ($(wildcard $(SDK_ROOT)/components),)
+$(info SDK not found at $(SDK_ROOT), downloading...)
+$(shell cd $(PROJ_DIR) && curl -LO $(SDK_URL) && unzip -qo $(SDK_ZIP) && rm -f $(SDK_ZIP))
+endif
+
+# Patch Makefile.posix to use ?= so our GNU_INSTALL_ROOT takes precedence
+$(shell sed -i.bak 's|GNU_INSTALL_ROOT := |GNU_INSTALL_ROOT ?= |' $(SDK_ROOT)/components/toolchain/gcc/Makefile.posix && rm -f $(SDK_ROOT)/components/toolchain/gcc/Makefile.posix.bak)
+
+# Detect or install ARM toolchain (xPack GCC ARM 11.3.1 - oldest with native Apple Silicon support)
+TOOLCHAIN_DIR := xpack-arm-none-eabi-gcc-11.3.1-1.1
+GNU_INSTALL_ROOT := $(PROJ_DIR)/$(TOOLCHAIN_DIR)
+
+ifeq ($(wildcard $(GNU_INSTALL_ROOT)/bin/arm-none-eabi-gcc),)
+$(info ARM toolchain not found, downloading...)
+TOOLCHAIN_UNAME_M := $(shell uname -m)
+ifeq ($(TOOLCHAIN_UNAME_M),arm64)
+TOOLCHAIN_ARCH := darwin-arm64
+else ifeq ($(TOOLCHAIN_UNAME_M),x86_64)
+TOOLCHAIN_ARCH := darwin-x86_64
+else
+TOOLCHAIN_ARCH := linux-x64
+endif
+TOOLCHAIN_FILE := $(TOOLCHAIN_DIR)-$(TOOLCHAIN_ARCH).tar.gz
+TOOLCHAIN_URL := https://github.com/xpack-dev-tools/arm-none-eabi-gcc-xpack/releases/download/v11.3.1-1.1/$(TOOLCHAIN_FILE)
+$(shell cd $(PROJ_DIR) && curl -LO $(TOOLCHAIN_URL) && tar xzf $(TOOLCHAIN_FILE) && rm -f $(TOOLCHAIN_FILE))
+endif
 
 $(OUTPUT_DIRECTORY)/nrf52832_xxaa.out: \
   LINKER_SCRIPT  := ble_app_beacon_gcc_nrf52.ld
@@ -28,8 +59,11 @@ SRC_FILES += \
   $(SDK_ROOT)/components/drivers_nrf/common/nrf_drv_common.c \
   $(SDK_ROOT)/components/drivers_nrf/gpiote/nrf_drv_gpiote.c \
   $(SDK_ROOT)/components/drivers_nrf/uart/nrf_drv_uart.c \
+  $(SDK_ROOT)/components/drivers_nrf/saadc/nrf_drv_saadc.c \
+  $(SDK_ROOT)/components/drivers_nrf/hal/nrf_saadc.c \
   $(SDK_ROOT)/components/libraries/bsp/bsp.c \
   $(SDK_ROOT)/components/libraries/bsp/bsp_nfc.c \
+  $(SDK_ROOT)/components/libraries/eddystone/es_battery_voltage_saadc.c \
   $(PROJ_DIR)/main.c \
   $(SDK_ROOT)/external/segger_rtt/RTT_Syscalls_GCC.c \
   $(SDK_ROOT)/external/segger_rtt/SEGGER_RTT.c \
@@ -133,6 +167,7 @@ INC_FOLDERS += \
   $(SDK_ROOT)/components/libraries/button \
   $(SDK_ROOT)/components/libraries/usbd \
   $(SDK_ROOT)/components/drivers_nrf/saadc \
+  $(SDK_ROOT)/components/libraries/eddystone \
   $(SDK_ROOT)/components/ble/ble_services/ble_lbs_c \
   $(SDK_ROOT)/components/ble/ble_racp \
   $(SDK_ROOT)/components/toolchain/gcc \
@@ -171,6 +206,7 @@ CFLAGS += -DS132
 CFLAGS += -mcpu=cortex-m4
 CFLAGS += -mthumb -mabi=aapcs
 CFLAGS +=  -Wall -Werror -O3 -g3
+CFLAGS += -Wno-array-bounds -Wno-enum-conversion
 CFLAGS += -mfloat-abi=hard -mfpu=fpv4-sp-d16
 # keep every function in separate section, this allows linker to discard unused ones
 CFLAGS += -ffunction-sections -fdata-sections -fno-strict-aliasing
@@ -211,7 +247,7 @@ LDFLAGS += -Wl,--gc-sections
 LDFLAGS += --specs=nano.specs -lc -lnosys
 
 
-.PHONY: $(TARGETS) default all clean help flash flash_softdevice
+.PHONY: $(TARGETS) default all clean help flash flash_softdevice cmake-sync
 
 # Default target - first one defined
 default: nrf52832_xxaa
