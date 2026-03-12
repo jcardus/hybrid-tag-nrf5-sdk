@@ -53,13 +53,24 @@ static ble_gatts_char_handles_t m_google_char_handles;
 static uint8_t              m_custom_uuid_type;
 
 // Apple key storage - receives 28 bytes in two writes (20 + 8)
+#ifdef APPLE_KEY_BYTES
+static uint8_t              apple_key[APPLE_KEY_LENGTH] = {APPLE_KEY_BYTES};
+static uint8_t              m_apple_key_offset = 0;
+static bool                 m_apple_key_ready = true;
+#else
 static uint8_t              apple_key[APPLE_KEY_LENGTH];
 static uint8_t              m_apple_key_offset = 0;
 static bool                 m_apple_key_ready = false;
+#endif
 
 // Google key storage - receives 20 bytes in one write operation
+#ifdef GOOGLE_KEY_BYTES
+static uint8_t              google_key[GOOGLE_KEY_LENGTH] = {GOOGLE_KEY_BYTES};
+static bool                 m_google_key_ready = true;
+#else
 static uint8_t              google_key[GOOGLE_KEY_LENGTH];
 static bool                 m_google_key_ready = false;
+#endif
 
 // Which key is currently being advertised (0 = apple, 1 = google)
 static uint8_t              m_current_key = 0;
